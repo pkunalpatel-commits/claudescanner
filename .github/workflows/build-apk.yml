@@ -16,6 +16,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install system packages
         run: |
           sudo apt-get update
@@ -32,7 +36,9 @@ jobs:
             ~/.buildozer
           key: buildozer-${{ hashFiles('buildozer.spec') }}
       - name: Build APK
-        run: buildozer -v android debug
+        run: |
+          buildozer android debug > build.log 2>&1 || { tail -n 150 build.log; df -h /; exit 1; }
+          tail -n 5 build.log
       - uses: actions/upload-artifact@v4
         with:
           name: DhanOIScanner-apk
