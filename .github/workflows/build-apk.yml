@@ -37,7 +37,13 @@ jobs:
           key: buildozer-${{ hashFiles('buildozer.spec') }}
       - name: Build APK
         run: |
-          buildozer android debug > build.log 2>&1 || { tail -n 150 build.log; df -h /; exit 1; }
+          buildozer android debug > build.log 2>&1 || {
+            echo "=== ERROR CONTEXT (lines before failure) ==="
+            grep -B 90 -m1 "# Command failed" build.log | head -90
+            echo "=== ERROR LINES ==="
+            grep -n -i -E "error|traceback|not found|no matching" build.log | grep -v "ENVIRONMENT" | tail -30
+            exit 1
+          }
           tail -n 5 build.log
       - uses: actions/upload-artifact@v4
         with:
