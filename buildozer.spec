@@ -5,7 +5,7 @@ package.domain = org.oiscanner
 source.dir = .
 source.include_exts = py
 version = 1.0.0
-requirements = python3,kivy==2.3.0,requests,urllib3,chardet,idna,certifi,charset-normalizer,websocket-client,plyer,pyjnius,android
+requirements = python3,kivy==2.3.0,openssl,sqlite3,requests,urllib3,chardet,idna,certifi,charset-normalizer,websocket-client,plyer,pyjnius,android
 orientation = all
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,POST_NOTIFICATIONS,VIBRATE,WAKE_LOCK

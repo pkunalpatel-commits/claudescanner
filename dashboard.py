@@ -211,10 +211,20 @@ class SettingsScreen(Screen):
         g.add_widget(ab)
         g.add_widget(L("Retention days | DB snapshot sec | holidays (YYYY-MM-DD,...)")); self.ret = TI(st["retention_days"], input_filter="int")
         self.dbi = TI(st["db_interval"], input_filter="int"); self.hol = TI(",".join(st["holidays"])); [g.add_widget(w) for w in (self.ret, self.dbi, self.hol)]
+        g.add_widget(BTN("View app log", self.show_log))
         g.add_widget(L("Presets")); self.pn = TI("", hint_text="preset name"); g.add_widget(self.pn)
         g.add_widget(BTN("Save preset", self.save_preset)); self.ps = Spinner(text="Load preset", values=list(st["presets"]), size_hint_y=None, height=dp(40))
         self.ps.bind(text=self.load_preset); g.add_widget(self.ps); g.add_widget(BTN("Apply settings", lambda b: self.apply(False)))
         sv = ScrollView(); sv.add_widget(g); self.add_widget(sv)
+
+    def show_log(self, *a):
+        try:
+            with open(os.path.join(os.path.dirname(self.sc.db.con.execute("PRAGMA database_list").fetchall()[0][2]), "scanner.log")) as f:
+                t = "".join(f.readlines()[-40:])
+        except Exception as e: t = "no log: %s" % e
+        sv = ScrollView(); lb = Label(text=t, size_hint_y=None, font_size=sp(10), text_size=(dp(300), None), halign="left")
+        lb.bind(texture_size=lambda i, s: setattr(i, "height", s[1])); sv.add_widget(lb)
+        Popup(title="scanner.log (last 40 lines)", content=sv, size_hint=(.95, .85)).open()
 
     def pick(self, *a):
         if not self.sc.im.by: return info("Stocks", "Instrument master still loading - wait and retry.")
