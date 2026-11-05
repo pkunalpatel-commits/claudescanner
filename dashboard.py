@@ -127,6 +127,62 @@ class MtfScreen(Screen):
         self.table.set_lines(fmt([c[0] for c in cols], cols) + "   (! = crossed threshold)", lines[:int(st["max_rows"])])
 
 
+HCOLS = COLS[:-1] + [("When", 12, "<")]
+HHEADER = fmt([c[0] for c in HCOLS], HCOLS)
+
+def hist_line(r):
+    v = [r["sym"], exp(r["expiry"]), "%g" % r["strike"], r["type"], "%+d" % r["dist"], "%.2f" % r["ltp"], p(r["ltp_pct"]),
+         num(r["turnover"]), num(r["oi"]), num(r["prev_oi"]), num(r["oi_chg"]), p(r["oi_pct"]), num(r["x"]), num(r["notional"]),
+         r["tf"], datetime.datetime.fromtimestamp(r["ts"], IST).strftime("%d%b %H:%M").upper()]
+    return fmt(v, HCOLS)
+
+
+class HistoryScreen(Screen):
+    """Historical scan with date filter: peak OI gain/loss per contract inside the chosen date range."""
+    def __init__(self, sc, **kw):
+        super().__init__(**kw); self.sc = sc; st = sc.st
+        last = sc.cal.session_date(datetime.datetime.now(IST))
+        root = BoxLayout(orientation="vertical")
+        b1 = BoxLayout(size_hint_y=None, height=dp(42)); b2 = BoxLayout(size_hint_y=None, height=dp(42)); b3 = BoxLayout(size_hint_y=None, height=dp(42))
+        self.d1 = TextInput(text=last.isoformat(), multiline=False, hint_text="From YYYY-MM-DD")
+        self.d2 = TextInput(text=last.isoformat(), multiline=False, hint_text="To YYYY-MM-DD")
+        b1.add_widget(Label(text="From", size_hint_x=.2)); b1.add_widget(self.d1); b1.add_widget(Label(text="To", size_hint_x=.15)); b1.add_widget(self.d2)
+        for n, k in (("Last session", 1), ("3 sessions", 3), ("5 sessions", 5)):
+            b2.add_widget(Button(text=n, on_release=lambda b, k=k: self.quick(k)))
+        self.tf = Spinner(text=st["show_tf"], values=S.TF_NAMES)
+        self.dir = Spinner(text=st["direction"], values=["both", "pos", "neg"])
+        self.side = Spinner(text="ALL", values=["ALL", "CE", "PE"])
+        self.only = ToggleButton(text="Crossing", state="down")
+        for w in (self.tf, self.dir, self.side, self.only): b3.add_widget(w)
+        b3.add_widget(Button(text="RUN", bold=True, on_release=self.run))
+        self.msg = Label(size_hint_y=None, height=dp(24), font_size=sp(11), color=(.7, .8, .9, 1))
+        self.table = Table()
+        for w in (b1, b2, b3, self.msg, self.table): root.add_widget(w)
+        self.add_widget(root)
+
+    def quick(self, k):
+        d = self.sc.cal.session_date(datetime.datetime.now(IST)); e = d
+        for _ in range(k - 1): d = self.sc.cal.prev_td(d)
+        self.d1.text, self.d2.text = d.isoformat(), e.isoformat()
+
+    def run(self, *a):
+        try:
+            d1, d2 = datetime.date.fromisoformat(self.d1.text.strip()), datetime.date.fromisoformat(self.d2.text.strip())
+        except ValueError: return info("Date", "Use YYYY-MM-DD, e.g. 2026-11-04")
+        if d1 > d2: d1, d2 = d2, d1
+        if d2 > datetime.datetime.now(IST).date(): return info("Date", "End date is in the future")
+        if (d2 - d1).days > 10: return info("Date", "Max range is 10 days")
+        self.sc.st["direction"] = self.dir.text; self.sc.st["show_tf"] = self.tf.text
+        self.sc.hist_scan(d1, d2, self.tf.text)
+
+    def refresh(self):
+        h = self.sc.hist
+        self.msg.text = h.get("msg", "Pick dates + timeframe, then RUN (uses your selected stocks / ATM+-N contracts)")
+        rows = [r for r in h.get("rows", []) if (self.side.text == "ALL" or r["type"] == self.side.text) and (self.only.state != "down" or r["cross"])]
+        rows = rows[:int(self.sc.st["max_rows"])]
+        self.table.set_lines(HHEADER, [(hist_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in rows])
+
+
 class AlertScreen(Screen):
     def __init__(self, sc, **kw):
         super().__init__(**kw); self.sc = sc
@@ -272,10 +328,10 @@ class Dashboard(BoxLayout):
         self.status = Label(size_hint_y=None, height=dp(26), font_size=sp(10), color=(.7, .8, .9, 1), shorten=True, halign="left")
         self.status.bind(size=lambda i, s: setattr(i, "text_size", (s[0], None)))
         self.sm = ScreenManager()
-        for cls, n in ((ScannerScreen, "Scanner"), (MtfScreen, "Multi-TF"), (AlertScreen, "Alerts"), (SettingsScreen, "Settings")):
+        for cls, n in ((ScannerScreen, "Scanner"), (MtfScreen, "Multi-TF"), (HistoryScreen, "History"), (AlertScreen, "Alerts"), (SettingsScreen, "Settings")):
             self.sm.add_widget(cls(sc, name=n))
         nav = BoxLayout(size_hint_y=None, height=dp(46))
-        for n in ("Scanner", "Multi-TF", "Alerts", "Settings"): nav.add_widget(Button(text=n, on_release=lambda b, n=n: self.go(n)))
+        for n in ("Scanner", "Multi-TF", "History", "Alerts", "Settings"): nav.add_widget(Button(text=n, on_release=lambda b, n=n: self.go(n)))
         self.add_widget(self.status); self.add_widget(self.sm); self.add_widget(nav)
         Clock.schedule_interval(self.tick, 2)
 

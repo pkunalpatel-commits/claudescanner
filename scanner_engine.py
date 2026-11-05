@@ -7,6 +7,7 @@ from atm_strike_manager import select_strikes
 from dhan_auth import DhanClient, DhanError
 from dhan_market_feed import MarketFeed
 from expiry_manager import pick_expiries
+from historical_scan import load_bars, scan_contract
 from instrument_master import InstrumentMaster
 from oi_calculation_engine import build_row, is_cross
 from subscription_manager import SubscriptionManager
@@ -23,6 +24,7 @@ class Scanner:
         self.state, self.under, self.contracts = {}, {}, {}
         self.table, self.mtf, self.armed = {}, [], {}
         self.msg = "Starting"; self.ready = False; self.need_auth = True; self.running = False
+        self.hist = {}
         self.filled = set(); self.bf_running = False; self.bf_failed = False; self.bf_msg = ""
         self.loading = False; self.alert_after = 0; self.profile = {}; self.dbq = []; self.last_flush = time.time()
 
@@ -110,6 +112,34 @@ class Scanner:
         if self.st["auto_backfill"] and not self.bf_running and not self.bf_failed \
                 and any(s not in self.filled for s in meta):
             threading.Thread(target=self._backfill, daemon=True).start()
+
+    # ---------- historical scan over a user-chosen date range ----------
+    def hist_scan(self, start, end, tf):
+        if self.hist.get("running"): return
+        self.hist = {"running": True, "msg": "Starting...", "rows": [], "tf": tf, "start": start, "end": end}
+        threading.Thread(target=self._hist_run, args=(start, end, tf, self.hist), daemon=True).start()
+
+    def _hist_run(self, start, end, tf, h):
+        try:
+            st = self.st; contracts = sorted(self.contracts.values(), key=lambda m: (m["sym"], m["expiry"], m["strike"], m["type"]))
+            if not contracts: h["msg"] = "No contracts - connect and select stocks first"; return
+            now = datetime.now(IST); frm = self.cal.o(self.cal.prev_td(start)); to = min(now, self.cal.c(end))
+            th = float(st["thresholds"].get(tf, 10)); rows, errs = [], 0
+            for k, m in enumerate(contracts):
+                if not self.running: break
+                h["msg"] = "Scanning %d/%d" % (k + 1, len(contracts))
+                try: bars = load_bars(self.client, m["secid"], frm, to)
+                except DhanError as ex:
+                    errs += 1; self.log.warning("hist %s: %s", m["secid"], ex)
+                    if errs >= 5: h["msg"] = "History unavailable: %s" % ex; return
+                    continue
+                r = scan_contract(m, bars, self.cal, tf, start, end, th, st["direction"], float(st["min_abs_oi"])) if bars else None
+                if r: rows.append(r); h["rows"] = list(rows)
+            rows.sort(key=lambda r: -abs(r["oi_pct"])); h["rows"] = rows
+            h["msg"] = "Done: %d contracts, %d crossed %.0f%% (%s)" % (len(rows), sum(1 for r in rows if r["cross"]), th, tf)
+        except Exception as ex:
+            self.log.exception("hist scan"); h["msg"] = "Error: %s" % ex
+        finally: h["running"] = False
 
     # ---------- historical backfill (Dhan intraday charts API, 1-min bars with OI) ----------
     def backfill_now(self):

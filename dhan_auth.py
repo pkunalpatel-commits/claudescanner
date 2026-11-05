@@ -66,7 +66,8 @@ class DhanClient:
                 wait = 0.25 - (time.time() - self._hlast)
                 if wait > 0: time.sleep(wait)
                 self._hlast = time.time()
-                r = requests.post(BASE + "/charts/intraday", json=body, headers=self.headers(), timeout=25)
+                try: r = requests.post(BASE + "/charts/intraday", json=body, headers=self.headers(), timeout=25)
+                except requests.RequestException as ex: raise DhanError("History network error: %s" % str(ex)[:80])
             if r.status_code == 429: time.sleep(2 * (attempt + 1)); continue
             if r.status_code != 200: raise DhanError("History HTTP %s: %s" % (r.status_code, r.text[:120]))
             return r.json()
