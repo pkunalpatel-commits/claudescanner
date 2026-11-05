@@ -18,6 +18,7 @@ DEFAULTS = {
     "min_abs_oi": 0,
     "show_tf": "5m", "sort": "oi_pct", "side": "ALL", "text": "", "only_crossing": True,
     "retention_days": 5, "db_interval": 60, "stale_secs": 60, "max_rows": 120,
+    "auto_backfill": True,
     "alerts_on": True, "sound_on": True, "notify_on": True,
     "holidays": [],                   # YYYY-MM-DD, NSE trading holidays (user maintained)
     "presets": {},

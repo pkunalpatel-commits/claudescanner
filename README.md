@@ -21,6 +21,12 @@ instrument_master (daily detailed scrip master; security IDs, expiries, strikes,
 expiry_manager, atm_strike_manager, subscription_manager (diff-based, no duplicates), oi_calculation_engine,
 turnover_engine, timeframe_engine (trading-time baselines), scanner_engine, alert_engine, database_manager, settings, dashboard.
 
+## Historical scan (backfill)
+On connect the app loads the previous session + today's 1-minute bars **with OI** for every monitored contract from
+Dhan's `POST /v2/charts/intraday` (`oi=true`), so all timeframes (1m-1D) work immediately instead of waiting for live data to
+build up. Data API limit ~5 req/s, so 100 contracts take ~30 s. Toggle/trigger it in Settings ("Backfill history now").
+History turnover is an estimate (bar close x volume).
+
 ## How it works / limitations (please read)
 - **Baselines**: rolling, in *trading time* (09:15-15:30 IST; nights/weekends/holidays skipped). Intraday baselines need history:
   a timeframe shows "-" until enough snapshots exist (restored from SQLite after restart). **1D** uses Dhan's previous-close OI

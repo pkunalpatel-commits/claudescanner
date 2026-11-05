@@ -211,6 +211,9 @@ class SettingsScreen(Screen):
         g.add_widget(ab)
         g.add_widget(L("Retention days | DB snapshot sec | holidays (YYYY-MM-DD,...)")); self.ret = TI(st["retention_days"], input_filter="int")
         self.dbi = TI(st["db_interval"], input_filter="int"); self.hol = TI(",".join(st["holidays"])); [g.add_widget(w) for w in (self.ret, self.dbi, self.hol)]
+        g.add_widget(L("Historical scan (loads past OI from Dhan so all timeframes work immediately)"))
+        self.bf = CheckBox(active=st["auto_backfill"], size_hint_y=None, height=dp(34)); g.add_widget(self.bf)
+        g.add_widget(BTN("Backfill history now", lambda b: (self.apply(False), self.sc.backfill_now(), info("History", "Backfill started - progress shows in the top status line"))))
         g.add_widget(BTN("View app log", self.show_log))
         g.add_widget(L("Presets")); self.pn = TI("", hint_text="preset name"); g.add_widget(self.pn)
         g.add_widget(BTN("Save preset", self.save_preset)); self.ps = Spinner(text="Load preset", values=list(st["presets"]), size_hint_y=None, height=dp(40))
@@ -240,6 +243,7 @@ class SettingsScreen(Screen):
             st["thresholds"] = {t: float(w.text or 0) for t, w in self.th.items()}
             st["min_abs_oi"] = int(self.mabs.text or 0)
             for k, c in self.al.items(): st[k] = c.active
+            st["auto_backfill"] = self.bf.active
             st["retention_days"], st["db_interval"] = max(2, int(self.ret.text or 5)), max(15, int(self.dbi.text or 60))
             st["holidays"] = [h.strip() for h in self.hol.text.split(",") if h.strip()]
             st.save(); self.sc.reconfigure(reauth); info("Saved", "Settings applied")

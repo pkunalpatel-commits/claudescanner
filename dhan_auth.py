@@ -11,7 +11,7 @@ class DhanError(Exception):
 
 class DhanClient:
     def __init__(self, st):
-        self.st = st; self._last = 0.0; self._lk = threading.Lock()
+        self.st = st; self._last = 0.0; self._lk = threading.Lock(); self._hlast = 0.0; self._hlk = threading.Lock()
 
     def headers(self):
         return {"access-token": self.st["access_token"].strip(), "client-id": self.st["client_id"].strip(),
@@ -56,3 +56,18 @@ class DhanClient:
             for k, v in d.items():
                 if v and v.get("last_price") is not None: out[str(k)] = float(v["last_price"])
         return out
+
+    def intraday(self, secid, frm, to, interval="1"):
+        """POST /charts/intraday with oi=true for an NSE_FNO stock option. Data API limit ~5 req/s."""
+        body = {"securityId": str(secid), "exchangeSegment": "NSE_FNO", "instrument": "OPTSTK",
+                "interval": str(interval), "oi": True, "fromDate": frm, "toDate": to}
+        for attempt in range(3):
+            with self._hlk:
+                wait = 0.25 - (time.time() - self._hlast)
+                if wait > 0: time.sleep(wait)
+                self._hlast = time.time()
+                r = requests.post(BASE + "/charts/intraday", json=body, headers=self.headers(), timeout=25)
+            if r.status_code == 429: time.sleep(2 * (attempt + 1)); continue
+            if r.status_code != 200: raise DhanError("History HTTP %s: %s" % (r.status_code, r.text[:120]))
+            return r.json()
+        raise DhanError("History rate-limited")

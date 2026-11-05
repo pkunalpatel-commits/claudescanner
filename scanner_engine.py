@@ -4,7 +4,7 @@ from datetime import datetime
 import settings as S
 from alert_engine import AlertEngine
 from atm_strike_manager import select_strikes
-from dhan_auth import DhanClient
+from dhan_auth import DhanClient, DhanError
 from dhan_market_feed import MarketFeed
 from expiry_manager import pick_expiries
 from instrument_master import InstrumentMaster
@@ -23,6 +23,7 @@ class Scanner:
         self.state, self.under, self.contracts = {}, {}, {}
         self.table, self.mtf, self.armed = {}, [], {}
         self.msg = "Starting"; self.ready = False; self.need_auth = True; self.running = False
+        self.filled = set(); self.bf_running = False; self.bf_failed = False; self.bf_msg = ""
         self.loading = False; self.alert_after = 0; self.profile = {}; self.dbq = []; self.last_flush = time.time()
 
     # ---------- lifecycle ----------
@@ -106,6 +107,55 @@ class Scanner:
         self.contracts = meta
         for sid in meta: self.store.ensure(sid)
         self.store.prune(set(meta)); self.subs.sync(desired)
+        if self.st["auto_backfill"] and not self.bf_running and not self.bf_failed \
+                and any(s not in self.filled for s in meta):
+            threading.Thread(target=self._backfill, daemon=True).start()
+
+    # ---------- historical backfill (Dhan intraday charts API, 1-min bars with OI) ----------
+    def backfill_now(self):
+        self.filled.clear(); self.bf_failed = False
+        if not self.bf_running: threading.Thread(target=self._backfill, daemon=True).start()
+
+    def _backfill(self):
+        self.bf_running = True; errs = 0
+        try:
+            while self.running and not self.need_auth:
+                todo = sorted((s for s in list(self.contracts) if s not in self.filled),
+                              key=lambda s: abs(self.contracts[s]["dist"]))
+                if not todo: break
+                for i, sid in enumerate(todo):
+                    if not self.running or self.need_auth: return
+                    try:
+                        self._backfill_one(sid); errs = 0
+                    except DhanError as ex:
+                        errs += 1; self.log.warning("history %s: %s", sid, ex)
+                        if errs >= 5:
+                            self.bf_failed = True; self.bf_msg = "History unavailable: %s" % ex; return
+                    except Exception: self.log.exception("history parse %s", sid)
+                    self.filled.add(sid); self.bf_msg = "History %d/%d" % (i + 1, len(todo))
+            self.bf_msg = ""
+        finally: self.bf_running = False
+
+    def _backfill_one(self, sid):
+        now = datetime.now(IST); d = self.cal.session_date(now); frm = self.cal.o(self.cal.prev_td(d))
+        to = min(now, self.cal.c(d)); f = "%Y-%m-%d %H:%M:%S"
+        j = self.client.intraday(sid, frm.strftime(f), to.strftime(f))
+        ts, cl, vol, oi = j.get("timestamp") or [], j.get("close") or [], j.get("volume") or [], j.get("open_interest") or []
+        if not ts or len(oi) != len(ts): return
+        rows, day, cv, cpv, tnow = [], None, 0.0, 0.0, time.time()
+        for k in range(len(ts)):
+            t0 = float(ts[k])
+            if t0 < 1.2e9: t0 += 315513000                      # legacy 1980-based IST epoch
+            snap = t0 + 60                                       # bar close time
+            if snap > tnow or snap < tnow - 10 * 86400: continue
+            dk = datetime.fromtimestamp(t0, IST).date()
+            if dk != day: day, cv, cpv = dk, 0.0, 0.0
+            v = float(vol[k] or 0); cv += v; cpv += float(cl[k]) * v
+            rows.append((snap, float(cl[k]), float(oi[k] or 0), cv, cpv / cv if cv else float(cl[k])))
+        ser = self.store.get(sid)
+        if ser is None or not rows: return
+        added = ser.merge(rows)
+        self.db.add_snapshots([(int(r[0]), sid, r[1], int(r[2]), int(r[3]), r[4], r[4] * r[3]) for r in added])
 
     def _sample(self):
         now = time.time(); dt = datetime.now(IST)
@@ -180,4 +230,4 @@ class Scanner:
         dt = datetime.now(IST); mk = "OPEN" if self.cal.in_session(dt) else "CLOSED"
         stale = sum(1 for t in list(self.table.values())[:1] for r in t.values() if r["stale"])
         return "%s | %s | contracts %d | subs %d | mkt %s | stale %d" % (
-            self.msg, self.feed.state(), len(self.contracts), len(self.subs.cur), mk, stale)
+            (self.msg + (" | " + self.bf_msg if self.bf_msg else "")), self.feed.state(), len(self.contracts), len(self.subs.cur), mk, stale)

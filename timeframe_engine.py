@@ -39,38 +39,53 @@ class Calendar:
 
 
 class Series:
-    """fine: ~5s snapshots for last ~25 min. coarse: ~60s snapshots kept for the retention window."""
+    """fine: ~5s snapshots for last ~25 min. coarse: ~60s snapshots kept for the retention window.
+    Coarse arrays live in one tuple so history merges can swap them atomically."""
     def __init__(self):
         self.ft, self.fr = [], []
-        self.ct, self.cl, self.co, self.cv, self.ca = (array("d") for _ in range(5))
+        self.c = tuple(array("d") for _ in range(5))      # ts, ltp, oi, vol, atp
 
     def _coarse(self, ts, ltp, oi, vol, atp):
-        self.ct.append(ts); self.cl.append(ltp); self.co.append(oi); self.cv.append(vol); self.ca.append(atp)
+        for arr, v in zip(self.c, (ts, ltp, oi, vol, atp)): arr.append(v)
 
     def add(self, ts, ltp, oi, vol, atp, every):
         self.ft.append(ts); self.fr.append((ts, ltp, oi, vol, atp))
         if len(self.ft) > 400:
             k = bisect.bisect_left(self.ft, ts - 1500); del self.ft[:k]; del self.fr[:k]
-        if not self.ct or ts - self.ct[-1] >= every - 1:
+        ct = self.c[0]
+        if not ct or ts - ct[-1] >= every - 1:
             self._coarse(ts, ltp, oi, vol, atp); return True
         return False
 
     def load(self, rows):
         for ts, ltp, oi, vol, atp in rows: self._coarse(ts, ltp or 0, oi or 0, vol or 0, atp or 0)
 
-    def _rec(self, i): return (self.ct[i], self.cl[i], self.co[i], self.cv[i], self.ca[i])
+    def merge(self, rows, gap=90):
+        """Insert historical rows (ts,ltp,oi,vol,atp) where no snapshot exists within `gap` sec.
+        Returns the rows that were added (for DB persistence)."""
+        c = self.c; ct = c[0]; new = []
+        for r in rows:
+            i = bisect.bisect_left(ct, r[0])
+            near = min([abs(ct[j] - r[0]) for j in (i - 1, i) if 0 <= j < len(ct)] or [1e9])
+            if near > gap: new.append(r)
+        if not new: return []
+        allr = sorted([tuple(a[i] for a in c) for i in range(len(ct))] + new, key=lambda x: x[0])
+        nc = tuple(array("d", [r[k] for r in allr]) for k in range(5))
+        self.c = nc
+        return new
 
     def at(self, t, tol=150):
+        c = self.c
         if self.ft and t >= self.ft[0]: rec = self.fr[bisect.bisect_right(self.ft, t) - 1]
         else:
-            i = bisect.bisect_right(self.ct, t) - 1
+            i = bisect.bisect_right(c[0], t) - 1
             if i < 0: return None
-            rec = self._rec(i)
+            rec = tuple(a[i] for a in c)
         return rec if t - rec[0] <= tol else None
 
     def before(self, t):
-        i = bisect.bisect_left(self.ct, t) - 1
-        return self._rec(i) if i >= 0 else None
+        c = self.c; i = bisect.bisect_left(c[0], t) - 1
+        return tuple(a[i] for a in c) if i >= 0 else None
 
 
 class SeriesStore:
