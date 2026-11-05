@@ -40,7 +40,7 @@ def hhmm(ts): return datetime.datetime.fromtimestamp(ts, IST).strftime("%H:%M:%S
 COLS = [("Stock", 10, "<"), ("Expiry", 8, "<"), ("Strike", 8, ">"), ("T", 2, "<"), ("ATM", 4, ">"),
         ("LTP", 8, ">"), ("LTP%", 8, ">"), ("Turn~", 9, ">"), ("CurOI", 9, ">"), ("PrevOI", 9, ">"),
         ("ChgOI", 9, ">"), ("OI%", 8, ">"), ("LTPxChg", 9, ">"), ("Notional", 9, ">"), ("TF", 3, "<"), ("Upd", 9, "<")]
-def fmt(vals, cols=COLS): return " ".join(("%" + a + str(w) + "s") % str(v)[:w] for v, (_, w, a) in zip(vals, cols))
+def fmt(vals, cols=COLS): return " ".join((str(v)[:w].ljust(w) if a == "<" else str(v)[:w].rjust(w)) for v, (_, w, a) in zip(vals, cols))
 HEADER = fmt([c[0] for c in COLS])
 
 def row_line(r):
