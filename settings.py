@@ -16,6 +16,8 @@ DEFAULTS = {
     "thresholds": {n: t for n, _, t in DEFAULT_TF},
     "direction": "both",              # both | pos | neg
     "min_abs_oi": 0,
+    "order": "desc", "ltp_gt": None, "ltp_lt": None,   # sort order; LTP% greater-than / less-than filters
+    "h_sort": "abs_oi", "h_mode": "Peak", "h_slot": "30m", "h_tfrom": "09:15", "h_tto": "15:30",
     "show_tf": "5m", "sort": "oi_pct", "side": "ALL", "text": "", "only_crossing": True,
     "retention_days": 5, "db_interval": 60, "stale_secs": 60, "max_rows": 120,
     "auto_backfill": True,
@@ -24,7 +26,7 @@ DEFAULTS = {
     "presets": {},
 }
 PRESET_KEYS = ["expiry_slots", "n_ce", "n_pe", "timeframes", "thresholds", "direction",
-               "min_abs_oi", "side", "only_crossing"]
+               "min_abs_oi", "side", "only_crossing", "ltp_gt", "ltp_lt", "order"]
 
 
 class Settings:
@@ -60,4 +62,4 @@ class Settings:
         if p: self.d.update(copy.deepcopy(p)); self.save()
 
     def reset_filters(self):
-        self.d.update(direction="both", min_abs_oi=0, side="ALL", text="", only_crossing=True); self.save()
+        self.d.update(direction="both", min_abs_oi=0, side="ALL", text="", only_crossing=True, ltp_gt=None, ltp_lt=None, order="desc"); self.save()

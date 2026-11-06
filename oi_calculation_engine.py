@@ -27,3 +27,25 @@ def is_cross(r, th, direction, min_abs):
     if direction == "pos": return p >= th
     if direction == "neg": return p <= -th
     return abs(p) >= th
+
+
+def price_ok(lp, gt, lt):
+    """LTP % filter: keep when LTP change % is greater than `gt` and less than `lt` (None = off)."""
+    if gt is None and lt is None: return True
+    if lp is None: return False
+    return (gt is None or lp > gt) and (lt is None or lp < lt)
+
+
+def _n(v, d=-1e18): return d if v is None else v
+
+SORT_KEYS = {
+    "oi_pct": lambda r: _n(r["oi_pct"]), "abs_oi": lambda r: abs(_n(r["oi_pct"], 0)),
+    "oi_chg": lambda r: _n(r["oi_chg"]), "turnover": lambda r: _n(r["turnover"]),
+    "notional": lambda r: _n(r["x"]), "ltp_pct": lambda r: _n(r["ltp_pct"]),
+    "dist": lambda r: r["dist"], "strike": lambda r: r["strike"],
+    "stock": lambda r: (r["sym"], r["strike"], r["type"], r.get("ts", 0)),
+}
+
+
+def sort_rows(rows, key, order="desc"):
+    return sorted(rows, key=SORT_KEYS.get(key, SORT_KEYS["oi_pct"]), reverse=(order != "asc"))

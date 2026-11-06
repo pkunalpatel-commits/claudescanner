@@ -9,7 +9,7 @@ from dhan_market_feed import MarketFeed
 from expiry_manager import pick_expiries
 from historical_scan import load_bars, scan_contract
 from instrument_master import InstrumentMaster
-from oi_calculation_engine import build_row, is_cross
+from oi_calculation_engine import build_row, is_cross, price_ok, sort_rows
 from subscription_manager import SubscriptionManager
 from timeframe_engine import Calendar, SeriesStore, baseline, IST
 
@@ -114,12 +114,12 @@ class Scanner:
             threading.Thread(target=self._backfill, daemon=True).start()
 
     # ---------- historical scan over a user-chosen date range ----------
-    def hist_scan(self, start, end, tf):
+    def hist_scan(self, start, end, tf, opt):
         if self.hist.get("running"): return
         self.hist = {"running": True, "msg": "Starting...", "rows": [], "tf": tf, "start": start, "end": end}
-        threading.Thread(target=self._hist_run, args=(start, end, tf, self.hist), daemon=True).start()
+        threading.Thread(target=self._hist_run, args=(start, end, tf, opt, self.hist), daemon=True).start()
 
-    def _hist_run(self, start, end, tf, h):
+    def _hist_run(self, start, end, tf, opt, h):
         try:
             st = self.st; contracts = sorted(self.contracts.values(), key=lambda m: (m["sym"], m["expiry"], m["strike"], m["type"]))
             if not contracts: h["msg"] = "No contracts - connect and select stocks first"; return
@@ -133,9 +133,10 @@ class Scanner:
                     errs += 1; self.log.warning("hist %s: %s", m["secid"], ex)
                     if errs >= 5: h["msg"] = "History unavailable: %s" % ex; return
                     continue
-                r = scan_contract(m, bars, self.cal, tf, start, end, th, st["direction"], float(st["min_abs_oi"])) if bars else None
-                if r: rows.append(r); h["rows"] = list(rows)
-            rows.sort(key=lambda r: -abs(r["oi_pct"])); h["rows"] = rows
+                if bars:
+                    rows.extend(scan_contract(m, bars, self.cal, tf, start, end, th, st["direction"], float(st["min_abs_oi"]), opt))
+                    h["rows"] = list(rows)
+            h["rows"] = rows
             h["msg"] = "Done: %d contracts, %d crossed %.0f%% (%s)" % (len(rows), sum(1 for r in rows if r["cross"]), th, tf)
         except Exception as ex:
             self.log.exception("hist scan"); h["msg"] = "Error: %s" % ex
@@ -245,16 +246,12 @@ class Scanner:
                     del self.armed[k]
 
     # ---------- queries for UI ----------
-    def query(self, tf, sort, side, text, only, limit):
-        keys = {"oi_pct": lambda r: r["oi_pct"], "oi_pos": lambda r: r["oi_chg"], "oi_neg": lambda r: -r["oi_chg"],
-                "turnover": lambda r: r["turnover"] or -1, "notional": lambda r: r["x"],
-                "ltp_pct": lambda r: r["ltp_pct"] if r["ltp_pct"] is not None else -1e9}
+    def query(self, tf, sort, side, text, only, limit, order="desc", gt=None, lt=None):
         txt = [t.strip().upper() for t in text.split(",") if t.strip()]
         rows = [r for r in self.table.get(tf, {}).values() if r["oi_pct"] is not None
-                and (side == "ALL" or r["type"] == side) and (not only or r["cross"])
+                and (side == "ALL" or r["type"] == side) and (not only or r["cross"]) and price_ok(r["ltp_pct"], gt, lt)
                 and (not txt or any(r["sym"].startswith(t) for t in txt))]
-        rows.sort(key=keys.get(sort, keys["oi_pct"]), reverse=True)
-        return rows[:limit]
+        return sort_rows(rows, sort, order)[:limit]
 
     def status_text(self):
         dt = datetime.now(IST); mk = "OPEN" if self.cal.in_session(dt) else "CLOSED"

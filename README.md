@@ -27,10 +27,16 @@ Dhan's `POST /v2/charts/intraday` (`oi=true`), so all timeframes (1m-1D) work im
 build up. Data API limit ~5 req/s, so 100 contracts take ~30 s. Toggle/trigger it in Settings ("Backfill history now").
 History turnover is an estimate (bar close x volume).
 
-## History tab (date-filtered historical scan)
-Pick From/To dates (max 10 sessions), a timeframe, direction and CE/PE, then **RUN**. For every monitored contract (your selected
-stocks, expiry and ATM +/- N) it finds the *peak* OI gain/loss for that timeframe inside the date range (1D = end-of-day vs previous
-end-of-day) and shows when it happened. Uses Dhan 1-minute history with OI. Only currently listed (unexpired) contracts are available.
+## History tab (date-wise / time-wise scan)
+Choose **dates** (From/To, max 10 sessions), a **time window** (e.g. 09:15 to 10:00), a timeframe, direction, CE/PE, then **RUN**.
+Modes: **Peak** = strongest OI move per contract in the range; **Date-wise** = strongest per date (one row per contract per day);
+**Time-wise** = strongest per time slot of the session (15m / 30m / 1H slots) across the chosen dates.
+(1D compares end-of-day vs previous end-of-day OI; the time window does not apply to 1D.)
+Uses Dhan 1-minute history with OI for your selected stocks / expiry / ATM +/- N. Only currently listed contracts are available.
+
+## Filters and sorting (Scanner, Multi-TF, History, Alerts)
+- **LTP % greater-than / less-than** (e.g. `> 2` and `< 10`, or `< -3` for falling premiums) - Scanner and History.
+- **Asc / Desc** toggle on every results screen; sort by OI Gain %, |OI %|, OI Change, Turnover, LTPxChgOI, LTP %, ATM distance, strike, stock.
 
 ## How it works / limitations (please read)
 - **Baselines**: rolling, in *trading time* (09:15-15:30 IST; nights/weekends/holidays skipped). Intraday baselines need history:

@@ -15,13 +15,34 @@ from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
 import settings as S
+from oi_calculation_engine import price_ok, sort_rows
 from timeframe_engine import IST
 
 MONO = os.path.join(kivy.kivy_data_dir, "fonts", "RobotoMono-Regular.ttf")
 if not os.path.exists(MONO): MONO = "Roboto"
 GREEN, RED, GREY, YEL, WHITE = "69f0ae", "ff5252", "90a4ae", "ffd740", "ffffff"
-SORTS = {"OI Gain %": "oi_pct", "+OI Chg": "oi_pos", "-OI Chg": "oi_neg", "Turnover": "turnover",
-         "LTPxChgOI": "notional", "LTP %": "ltp_pct"}
+SORTS = {"OI Gain %": "oi_pct", "|OI %| abs": "abs_oi", "OI Change": "oi_chg", "Turnover": "turnover", "LTPxChgOI": "notional",
+         "LTP %": "ltp_pct", "ATM Dist": "dist", "Strike": "strike", "Stock A-Z": "stock"}
+INV = {v: k for k, v in SORTS.items()}
+
+
+def fnum(t):
+    try: return float(str(t).strip()) if str(t).strip() else None
+    except ValueError: return None
+
+
+def order_button(st):
+    b = ToggleButton(text="Asc" if st["order"] == "asc" else "Desc", state="down" if st["order"] == "asc" else "normal", size_hint_x=.6)
+    def on(i, v): st["order"] = "asc" if v == "down" else "desc"; i.text = "Asc" if v == "down" else "Desc"
+    b.bind(state=on); return b
+
+
+def sync_order(b, st):
+    want = "down" if st["order"] == "asc" else "normal"
+    if b.state != want: b.state = want
+
+
+def tinput(text="", hint="", **k): return TextInput(text=text, hint_text=hint, multiline=False, write_tab=False, **k)
 
 
 def num(x):
@@ -79,47 +100,67 @@ def info(title, text):
           size_hint=(.85, .4)).open()
 
 
+HCOLS = COLS[:-1] + [("Slot", 11, "<"), ("When", 12, "<")]
+HHEADER = fmt([c[0] for c in HCOLS], HCOLS)
+
+
+def hist_line(r):
+    v = [r["sym"], exp(r["expiry"]), "%g" % r["strike"], r["type"], "%+d" % r["dist"], "%.2f" % r["ltp"], p(r["ltp_pct"]),
+         num(r["turnover"]), num(r["oi"]), num(r["prev_oi"]), num(r["oi_chg"]), p(r["oi_pct"]), num(r["x"]), num(r["notional"]),
+         r["tf"], r.get("slot", "-"), datetime.datetime.fromtimestamp(r["ts"], IST).strftime("%d%b %H:%M").upper()]
+    return fmt(v, HCOLS)
+
+
+def bar(): return BoxLayout(size_hint_y=None, height=dp(40))
+
+
 class ScannerScreen(Screen):
     def __init__(self, sc, **kw):
         super().__init__(**kw); self.sc = sc; st = sc.st
-        root = BoxLayout(orientation="vertical")
-        b1 = BoxLayout(size_hint_y=None, height=dp(42)); b2 = BoxLayout(size_hint_y=None, height=dp(42))
-        inv = {v: k for k, v in SORTS.items()}
+        root = BoxLayout(orientation="vertical"); b1, b2, b3 = bar(), bar(), bar()
         self.tf = Spinner(text=st["show_tf"], values=S.TF_NAMES)
-        self.sort = Spinner(text=inv.get(st["sort"], "OI Gain %"), values=list(SORTS))
+        self.sort = Spinner(text=INV.get(st["sort"], "OI Gain %"), values=list(SORTS))
         self.side = Spinner(text=st["side"], values=["ALL", "CE", "PE"])
         self.dir = Spinner(text=st["direction"], values=["both", "pos", "neg"])
         self.only = ToggleButton(text="Crossing", state="down" if st["only_crossing"] else "normal")
-        self.txt = TextInput(hint_text="stocks: SBIN,INFY", text=st["text"], multiline=False)
+        self.txt = tinput(st["text"], "stocks: SBIN,INFY")
+        self.gt = tinput("" if st["ltp_gt"] is None else str(st["ltp_gt"]), "> %"); self.lt = tinput("" if st["ltp_lt"] is None else str(st["ltp_lt"]), "< %")
+        self.ord = order_button(st)
         for w in (self.tf, self.sort, self.side): b1.add_widget(w)
-        for w in (self.dir, self.only): b2.add_widget(w)
-        b2.add_widget(self.txt)
-        for w in (self.tf, self.sort, self.side, self.dir, self.txt): w.bind(text=self.changed)
-        self.only.bind(state=self.changed)
-        self.table = Table(); [root.add_widget(w) for w in (b1, b2, self.table)]; self.add_widget(root)
+        for w in (self.dir, self.only, self.txt): b2.add_widget(w)
+        for w in (Label(text="LTP%>", size_hint_x=.5), self.gt, Label(text="<", size_hint_x=.3), self.lt, self.ord): b3.add_widget(w)
+        for w in (self.tf, self.sort, self.side, self.dir, self.txt, self.gt, self.lt): w.bind(text=self.changed)
+        self.only.bind(state=self.changed); self.ord.bind(state=self.changed)
+        self.table = Table(); [root.add_widget(w) for w in (b1, b2, b3, self.table)]; self.add_widget(root)
 
     def changed(self, *a):
         st = self.sc.st
         st["show_tf"] = self.tf.text; st["sort"] = SORTS[self.sort.text]; st["side"] = self.side.text
         st["direction"] = self.dir.text; st["only_crossing"] = self.only.state == "down"; st["text"] = self.txt.text
+        st["ltp_gt"], st["ltp_lt"] = fnum(self.gt.text), fnum(self.lt.text)
         self.refresh()
 
     def refresh(self):
-        st = self.sc.st
+        st = self.sc.st; sync_order(self.ord, st)
         self.tf.values = [t for t in S.TF_NAMES if t in st["timeframes"]] or S.TF_NAMES
-        rows = self.sc.query(st["show_tf"], st["sort"], st["side"], st["text"], st["only_crossing"], int(st["max_rows"]))
+        rows = self.sc.query(st["show_tf"], st["sort"], st["side"], st["text"], st["only_crossing"], int(st["max_rows"]),
+                             st["order"], st["ltp_gt"], st["ltp_lt"])
         self.table.set_lines(HEADER, [(row_line(r), row_color(r)) for r in rows])
 
 
 class MtfScreen(Screen):
     def __init__(self, sc, **kw):
-        super().__init__(**kw); self.sc = sc; self.table = Table(); self.add_widget(self.table)
+        super().__init__(**kw); self.sc = sc
+        root = BoxLayout(orientation="vertical"); b = bar(); self.ord = order_button(sc.st)
+        b.add_widget(Label(text="Sorted by strongest OI %")); b.add_widget(self.ord)
+        self.table = Table(); root.add_widget(b); root.add_widget(self.table); self.add_widget(root)
 
     def refresh(self):
-        st = self.sc.st; tfs = [t for t in S.TF_NAMES if t in st["timeframes"]]
+        st = self.sc.st; sync_order(self.ord, st); tfs = [t for t in S.TF_NAMES if t in st["timeframes"]]
         cols = [("Stock", 10, "<"), ("Contract", 15, "<")] + [(t, 8, ">") for t in tfs]
         txt = [t.strip().upper() for t in st["text"].split(",") if t.strip()]; lines = []
-        for e in self.sc.mtf:
+        items = self.sc.mtf if st["order"] != "asc" else list(reversed(self.sc.mtf))
+        for e in items:
             m = e["meta"]
             if (st["side"] != "ALL" and m["type"] != st["side"]) or (txt and not any(m["sym"].startswith(t) for t in txt)): continue
             cells = [(p(e["cells"][t][0]) + ("!" if e["cells"][t][1] else "")) if t in e["cells"] else "-" for t in tfs]
@@ -127,37 +168,28 @@ class MtfScreen(Screen):
         self.table.set_lines(fmt([c[0] for c in cols], cols) + "   (! = crossed threshold)", lines[:int(st["max_rows"])])
 
 
-HCOLS = COLS[:-1] + [("When", 12, "<")]
-HHEADER = fmt([c[0] for c in HCOLS], HCOLS)
-
-def hist_line(r):
-    v = [r["sym"], exp(r["expiry"]), "%g" % r["strike"], r["type"], "%+d" % r["dist"], "%.2f" % r["ltp"], p(r["ltp_pct"]),
-         num(r["turnover"]), num(r["oi"]), num(r["prev_oi"]), num(r["oi_chg"]), p(r["oi_pct"]), num(r["x"]), num(r["notional"]),
-         r["tf"], datetime.datetime.fromtimestamp(r["ts"], IST).strftime("%d%b %H:%M").upper()]
-    return fmt(v, HCOLS)
-
-
 class HistoryScreen(Screen):
-    """Historical scan with date filter: peak OI gain/loss per contract inside the chosen date range."""
+    """Historical scan: date range + time window + mode (Peak / Date-wise / Time-wise) + LTP% filters + sort."""
     def __init__(self, sc, **kw):
         super().__init__(**kw); self.sc = sc; st = sc.st
         last = sc.cal.session_date(datetime.datetime.now(IST))
-        root = BoxLayout(orientation="vertical")
-        b1 = BoxLayout(size_hint_y=None, height=dp(42)); b2 = BoxLayout(size_hint_y=None, height=dp(42)); b3 = BoxLayout(size_hint_y=None, height=dp(42))
-        self.d1 = TextInput(text=last.isoformat(), multiline=False, hint_text="From YYYY-MM-DD")
-        self.d2 = TextInput(text=last.isoformat(), multiline=False, hint_text="To YYYY-MM-DD")
-        b1.add_widget(Label(text="From", size_hint_x=.2)); b1.add_widget(self.d1); b1.add_widget(Label(text="To", size_hint_x=.15)); b1.add_widget(self.d2)
-        for n, k in (("Last session", 1), ("3 sessions", 3), ("5 sessions", 5)):
-            b2.add_widget(Button(text=n, on_release=lambda b, k=k: self.quick(k)))
-        self.tf = Spinner(text=st["show_tf"], values=S.TF_NAMES)
-        self.dir = Spinner(text=st["direction"], values=["both", "pos", "neg"])
-        self.side = Spinner(text="ALL", values=["ALL", "CE", "PE"])
-        self.only = ToggleButton(text="Crossing", state="down")
-        for w in (self.tf, self.dir, self.side, self.only): b3.add_widget(w)
-        b3.add_widget(Button(text="RUN", bold=True, on_release=self.run))
-        self.msg = Label(size_hint_y=None, height=dp(24), font_size=sp(11), color=(.7, .8, .9, 1))
-        self.table = Table()
-        for w in (b1, b2, b3, self.msg, self.table): root.add_widget(w)
+        root = BoxLayout(orientation="vertical"); b1, b2, b3, b4, b5 = bar(), bar(), bar(), bar(), bar()
+        self.d1 = tinput(last.isoformat(), "From YYYY-MM-DD"); self.d2 = tinput(last.isoformat(), "To YYYY-MM-DD")
+        for w in (Label(text="Date", size_hint_x=.3), self.d1, Label(text="to", size_hint_x=.2), self.d2): b1.add_widget(w)
+        for n, k in (("Last session", 1), ("3 sessions", 3), ("5 sessions", 5)): b2.add_widget(Button(text=n, on_release=lambda b, k=k: self.quick(k)))
+        self.t1 = tinput(st["h_tfrom"], "HH:MM"); self.t2 = tinput(st["h_tto"], "HH:MM")
+        self.mode = Spinner(text=st["h_mode"], values=["Peak", "Date-wise", "Time-wise"]); self.slot = Spinner(text=st["h_slot"], values=["15m", "30m", "1H"])
+        for w in (Label(text="Time", size_hint_x=.35), self.t1, Label(text="to", size_hint_x=.2), self.t2, self.mode, self.slot): b3.add_widget(w)
+        self.tf = Spinner(text=st["show_tf"], values=S.TF_NAMES); self.dir = Spinner(text=st["direction"], values=["both", "pos", "neg"])
+        self.side = Spinner(text="ALL", values=["ALL", "CE", "PE"]); self.only = ToggleButton(text="Crossing", state="down")
+        for w in (self.tf, self.dir, self.side, self.only): b4.add_widget(w)
+        b4.add_widget(Button(text="RUN", bold=True, on_release=self.run))
+        self.sort = Spinner(text=INV.get(st["h_sort"], "|OI %| abs"), values=list(SORTS))
+        self.gt = tinput("" if st["ltp_gt"] is None else str(st["ltp_gt"]), "> %"); self.lt = tinput("" if st["ltp_lt"] is None else str(st["ltp_lt"]), "< %")
+        self.ord = order_button(st)
+        for w in (self.sort, Label(text="LTP%>", size_hint_x=.5), self.gt, Label(text="<", size_hint_x=.25), self.lt, self.ord): b5.add_widget(w)
+        self.msg = Label(size_hint_y=None, height=dp(24), font_size=sp(11), color=(.7, .8, .9, 1)); self.table = Table()
+        for w in (b1, b2, b3, b4, b5, self.msg, self.table): root.add_widget(w)
         self.add_widget(root)
 
     def quick(self, k):
@@ -168,33 +200,41 @@ class HistoryScreen(Screen):
     def run(self, *a):
         try:
             d1, d2 = datetime.date.fromisoformat(self.d1.text.strip()), datetime.date.fromisoformat(self.d2.text.strip())
-        except ValueError: return info("Date", "Use YYYY-MM-DD, e.g. 2026-11-04")
+            t1, t2 = datetime.time.fromisoformat(self.t1.text.strip()), datetime.time.fromisoformat(self.t2.text.strip())
+        except ValueError: return info("Input", "Dates: YYYY-MM-DD (e.g. 2026-11-04)\nTimes: HH:MM (e.g. 09:15)")
         if d1 > d2: d1, d2 = d2, d1
+        if t1 > t2: t1, t2 = t2, t1
         if d2 > datetime.datetime.now(IST).date(): return info("Date", "End date is in the future")
         if (d2 - d1).days > 10: return info("Date", "Max range is 10 days")
-        self.sc.st["direction"] = self.dir.text; self.sc.st["show_tf"] = self.tf.text
-        self.sc.hist_scan(d1, d2, self.tf.text)
+        st = self.sc.st
+        st.d.update(direction=self.dir.text, show_tf=self.tf.text, h_mode=self.mode.text, h_slot=self.slot.text, h_tfrom=self.t1.text.strip(), h_tto=self.t2.text.strip())
+        opt = dict(tfrom=t1, tto=t2, mode=self.mode.text, slot={"15m": 900, "30m": 1800, "1H": 3600}[self.slot.text], gt=fnum(self.gt.text), lt=fnum(self.lt.text))
+        self.sc.hist_scan(d1, d2, self.tf.text, opt)
 
     def refresh(self):
-        h = self.sc.hist
-        self.msg.text = h.get("msg", "Pick dates + timeframe, then RUN (uses your selected stocks / ATM+-N contracts)")
-        rows = [r for r in h.get("rows", []) if (self.side.text == "ALL" or r["type"] == self.side.text) and (self.only.state != "down" or r["cross"])]
-        rows = rows[:int(self.sc.st["max_rows"])]
+        st = self.sc.st; sync_order(self.ord, st); st["h_sort"] = SORTS[self.sort.text]
+        h = self.sc.hist; gt, lt = fnum(self.gt.text), fnum(self.lt.text)
+        self.msg.text = h.get("msg", "Choose date / time / mode, then RUN (scans your selected stocks, ATM +/- N)")
+        rows = [r for r in h.get("rows", []) if (self.side.text == "ALL" or r["type"] == self.side.text)
+                and (self.only.state != "down" or r["cross"]) and price_ok(r["ltp_pct"], gt, lt)]
+        rows = sort_rows(rows, st["h_sort"], st["order"])[:int(st["max_rows"])]
         self.table.set_lines(HHEADER, [(hist_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in rows])
 
 
 class AlertScreen(Screen):
     def __init__(self, sc, **kw):
         super().__init__(**kw); self.sc = sc
-        root = BoxLayout(orientation="vertical"); bar = BoxLayout(size_hint_y=None, height=dp(42))
+        root = BoxLayout(orientation="vertical"); b = bar()
         self.on = ToggleButton(text="Alerts ON", state="down" if sc.st["alerts_on"] else "normal")
-        self.on.bind(state=lambda b, s: (sc.st.__setitem__("alerts_on", s == "down"), sc.st.save()))
-        clr = Button(text="Clear history", on_release=lambda b: sc.alerts.clear())
-        bar.add_widget(self.on); bar.add_widget(clr)
-        self.table = Table(); root.add_widget(bar); root.add_widget(self.table); self.add_widget(root)
+        self.on.bind(state=lambda i, s: (sc.st.__setitem__("alerts_on", s == "down"), sc.st.save()))
+        self.ord = order_button(sc.st)
+        for w in (self.on, Button(text="Clear history", on_release=lambda i: sc.alerts.clear()), self.ord): b.add_widget(w)
+        self.table = Table(); root.add_widget(b); root.add_widget(self.table); self.add_widget(root)
 
     def refresh(self):
-        lines = [(hhmm(r["alert_ts"]) + " " + row_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in list(self.sc.alerts.history)[:200]]
+        st = self.sc.st; sync_order(self.ord, st); items = list(self.sc.alerts.history)
+        if st["order"] == "asc": items.reverse()
+        lines = [(hhmm(r["alert_ts"]) + " " + row_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in items[:200]]
         self.table.set_lines("Alert@   " + HEADER, lines)
 
 
