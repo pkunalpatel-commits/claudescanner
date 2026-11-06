@@ -41,8 +41,11 @@ def _n(v, d=-1e18): return d if v is None else v
 SORT_KEYS = {
     "oi_pct": lambda r: _n(r["oi_pct"]), "abs_oi": lambda r: abs(_n(r["oi_pct"], 0)),
     "oi_chg": lambda r: _n(r["oi_chg"]), "turnover": lambda r: _n(r["turnover"]),
-    "notional": lambda r: _n(r["x"]), "ltp_pct": lambda r: _n(r["ltp_pct"]),
-    "dist": lambda r: r["dist"], "strike": lambda r: r["strike"],
+    "notional": lambda r: _n(r["notional"]), "x": lambda r: _n(r["x"]), "ltp_pct": lambda r: _n(r["ltp_pct"]),
+    "ltp": lambda r: r["ltp"], "oi": lambda r: _n(r["oi"]), "prev_oi": lambda r: _n(r["prev_oi"]),
+    "dist": lambda r: r["dist"], "strike": lambda r: r["strike"], "expiry": lambda r: r["expiry"],
+    "type": lambda r: r["type"], "tf": lambda r: r["tf"], "ts": lambda r: r.get("ts", 0),
+    "slot": lambda r: r.get("slot", ""), "alert_ts": lambda r: r.get("alert_ts", 0),
     "stock": lambda r: (r["sym"], r["strike"], r["type"], r.get("ts", 0)),
 }
 

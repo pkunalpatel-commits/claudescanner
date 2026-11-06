@@ -36,7 +36,8 @@ Uses Dhan 1-minute history with OI for your selected stocks / expiry / ATM +/- N
 
 ## Filters and sorting (Scanner, Multi-TF, History, Alerts)
 - **LTP % greater-than / less-than** (e.g. `> 2` and `< 10`, or `< -3` for falling premiums) - Scanner and History.
-- **Asc / Desc** toggle on every results screen; sort by OI Gain %, |OI %|, OI Change, Turnover, LTPxChgOI, LTP %, ATM distance, strike, stock.
+- **Double-tap any column heading** to sort by that column; double-tap the same heading again to flip Asc/Desc (arrow ^ / v shows the sorted column). Headings stay fixed while you scroll rows. Works on Scanner, Multi-TF, History and Alerts.
+- **Asc / Desc** toggle button on every results screen; sort by OI Gain %, |OI %|, OI Change, Turnover, LTPxChgOI, LTP %, ATM distance, strike, stock.
 
 ## How it works / limitations (please read)
 - **Baselines**: rolling, in *trading time* (09:15-15:30 IST; nights/weekends/holidays skipped). Intraday baselines need history:

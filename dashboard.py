@@ -12,6 +12,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen, ScreenManager
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.spinner import Spinner
+from kivy.uix.stencilview import StencilView
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
 import settings as S
@@ -22,7 +23,13 @@ MONO = os.path.join(kivy.kivy_data_dir, "fonts", "RobotoMono-Regular.ttf")
 if not os.path.exists(MONO): MONO = "Roboto"
 GREEN, RED, GREY, YEL, WHITE = "69f0ae", "ff5252", "90a4ae", "ffd740", "ffffff"
 SORTS = {"OI Gain %": "oi_pct", "|OI %| abs": "abs_oi", "OI Change": "oi_chg", "Turnover": "turnover", "LTPxChgOI": "notional",
-         "LTP %": "ltp_pct", "ATM Dist": "dist", "Strike": "strike", "Stock A-Z": "stock"}
+         "LTP %": "ltp_pct", "ATM Dist": "dist", "Strike": "strike", "Stock A-Z": "stock", "LTP": "ltp", "Cur OI": "oi",
+         "Prev OI": "prev_oi", "LTPxChg": "x", "Expiry": "expiry", "Call/Put": "type", "Timeframe": "tf", "Updated": "ts", "Slot": "slot"}
+# column heading -> sort key (double-tap a heading to sort; double-tap again to flip Asc/Desc)
+COL_KEYS = {"Stock": "stock", "Expiry": "expiry", "Strike": "strike", "T": "type", "ATM": "dist", "LTP": "ltp", "LTP%": "ltp_pct",
+            "Turn~": "turnover", "CurOI": "oi", "PrevOI": "prev_oi", "ChgOI": "oi_chg", "OI%": "oi_pct", "LTPxChg": "x",
+            "Notional": "notional", "TF": "tf", "Upd": "ts", "Slot": "slot", "When": "ts", "Alert@": "alert_ts"}
+TEXT_KEYS = {"stock", "expiry", "type", "tf", "slot"}
 INV = {v: k for k, v in SORTS.items()}
 
 
@@ -72,27 +79,71 @@ def row_line(r):
 def row_color(r): return (GREEN if r["oi_chg"] > 0 else RED) if r["cross"] else GREY
 
 
-class Table(ScrollView):
-    def __init__(self, **kw):
-        super().__init__(do_scroll_x=True, do_scroll_y=True, bar_width=dp(4), **kw)
-        self.box = GridLayout(cols=1, size_hint=(None, None)); self.add_widget(self.box)
-        self.pool = []; self.n = -1
+class Header(StencilView):
+    """Sticky column-heading row. Double-tap a heading to sort by that column (again = flip Asc/Desc)."""
+    def __init__(self, table, **kw):
+        super().__init__(size_hint_y=None, height=dp(26), **kw); self.table = table
+        self.lbl = Label(markup=True, font_name=MONO, font_size=sp(11), size_hint=(None, None), height=dp(26), halign="left", valign="middle")
+        self.lbl.bind(size=lambda i, s: setattr(i, "text_size", s)); self.add_widget(self.lbl)
+        self.bind(pos=lambda *a: table.sync(), size=lambda *a: table.sync())
 
-    def set_lines(self, header, lines):
-        need = len(lines) + 1
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            if touch.is_double_tap and self.table.on_sort:
+                t = self.table.col_at(touch.x - self.lbl.x)
+                if t: self.table.on_sort(t)
+            return True
+        return super().on_touch_down(touch)
+
+
+class Table(BoxLayout):
+    def __init__(self, **kw):
+        super().__init__(orientation="vertical", **kw)
+        self.on_sort = None; self.cols = []; self.pool = []; self.n = -1
+        self.head = Header(self)
+        self.body = ScrollView(do_scroll_x=True, do_scroll_y=True, bar_width=dp(4))
+        self.box = GridLayout(cols=1, size_hint=(None, None)); self.body.add_widget(self.box)
+        self.add_widget(self.head); self.add_widget(self.body)
+        self.body.bind(scroll_x=lambda *a: self.sync(), size=lambda *a: self.sync())
+
+    def sync(self):
+        off = max(0, self.box.width - self.body.width) * self.body.scroll_x
+        self.head.lbl.pos = (self.head.x - off, self.head.y); self.head.lbl.width = self.box.width
+
+    def col_at(self, x):
+        ch = int(x / (sp(11) * 0.6)); pos = 0
+        for t, w, a in self.cols:
+            if ch < pos + w + 1: return t
+            pos += w + 1
+        return None
+
+    def set_lines(self, header, lines, cols=None):
+        if cols is not None: self.cols = cols
+        need = len(lines)
         while len(self.pool) < need:
-            l = Label(markup=True, font_name=MONO, font_size=sp(11), size_hint=(None, None), height=dp(22),
-                      halign="left", valign="middle")
+            l = Label(markup=True, font_name=MONO, font_size=sp(11), size_hint=(None, None), height=dp(22), halign="left", valign="middle")
             l.bind(size=lambda i, s: setattr(i, "text_size", s)); self.pool.append(l)
         w = (max([len(header)] + [len(t) for t, _ in lines]) + 2) * sp(11) * 0.62
         for l in self.pool[:need]: l.width = w
-        self.pool[0].text = "[b][color=%s]%s[/color][/b]" % (WHITE, header)
-        for l, (t, c) in zip(self.pool[1:need], lines): l.text = "[color=%s]%s[/color]" % (c, t)
+        self.head.lbl.text = "[b][color=%s]%s[/color][/b]" % (WHITE, header)
+        for l, (t, c) in zip(self.pool, lines): l.text = "[color=%s]%s[/color]" % (c, t)
         if need != self.n:
             self.box.clear_widgets()
             for l in self.pool[:need]: self.box.add_widget(l)
             self.n = need
-        self.box.width = w; self.box.height = need * dp(22)
+        self.box.width = w; self.box.height = max(need * dp(22), dp(22)); self.sync()
+
+
+def hdr(cols, cur, order):
+    ar = "^" if order == "asc" else "v"
+    return fmt([c[0] + (ar if COL_KEYS.get(c[0]) == cur else "") for c in cols], cols)
+
+
+def toggle_sort(st, skey, cur, key):
+    """Returns the new sort key; same column again flips Asc/Desc, a new column starts Desc (text columns Asc)."""
+    if cur == key: st["order"] = "desc" if st["order"] == "asc" else "asc"
+    else: st["order"] = "asc" if key in TEXT_KEYS else "desc"
+    st[skey] = key; return key
 
 
 def info(title, text):
@@ -131,7 +182,13 @@ class ScannerScreen(Screen):
         for w in (Label(text="LTP%>", size_hint_x=.5), self.gt, Label(text="<", size_hint_x=.3), self.lt, self.ord): b3.add_widget(w)
         for w in (self.tf, self.sort, self.side, self.dir, self.txt, self.gt, self.lt): w.bind(text=self.changed)
         self.only.bind(state=self.changed); self.ord.bind(state=self.changed)
-        self.table = Table(); [root.add_widget(w) for w in (b1, b2, b3, self.table)]; self.add_widget(root)
+        self.table = Table(); self.table.on_sort = self.sort_by
+        [root.add_widget(w) for w in (b1, b2, b3, self.table)]; self.add_widget(root)
+
+    def sort_by(self, title):
+        key = COL_KEYS.get(title); st = self.sc.st
+        if not key: return
+        toggle_sort(st, "sort", st["sort"], key); self.sort.text = INV.get(key, self.sort.text); self.refresh()
 
     def changed(self, *a):
         st = self.sc.st
@@ -145,27 +202,42 @@ class ScannerScreen(Screen):
         self.tf.values = [t for t in S.TF_NAMES if t in st["timeframes"]] or S.TF_NAMES
         rows = self.sc.query(st["show_tf"], st["sort"], st["side"], st["text"], st["only_crossing"], int(st["max_rows"]),
                              st["order"], st["ltp_gt"], st["ltp_lt"])
-        self.table.set_lines(HEADER, [(row_line(r), row_color(r)) for r in rows])
+        self.table.set_lines(hdr(COLS, st["sort"], st["order"]), [(row_line(r), row_color(r)) for r in rows], COLS)
 
 
 class MtfScreen(Screen):
     def __init__(self, sc, **kw):
-        super().__init__(**kw); self.sc = sc
+        super().__init__(**kw); self.sc = sc; self.col = None
         root = BoxLayout(orientation="vertical"); b = bar(); self.ord = order_button(sc.st)
-        b.add_widget(Label(text="Sorted by strongest OI %")); b.add_widget(self.ord)
-        self.table = Table(); root.add_widget(b); root.add_widget(self.table); self.add_widget(root)
+        b.add_widget(Label(text="Double-tap a heading to sort")); b.add_widget(self.ord)
+        self.table = Table(); self.table.on_sort = self.sort_by; root.add_widget(b); root.add_widget(self.table); self.add_widget(root)
+
+    def sort_by(self, title):
+        st = self.sc.st
+        if self.col == title: st["order"] = "desc" if st["order"] == "asc" else "asc"
+        else: self.col = title; st["order"] = "asc" if title in ("Stock", "Contract") else "desc"
+        self.refresh()
 
     def refresh(self):
         st = self.sc.st; sync_order(self.ord, st); tfs = [t for t in S.TF_NAMES if t in st["timeframes"]]
+        ar = "^" if st["order"] == "asc" else "v"
         cols = [("Stock", 10, "<"), ("Contract", 15, "<")] + [(t, 8, ">") for t in tfs]
-        txt = [t.strip().upper() for t in st["text"].split(",") if t.strip()]; lines = []
-        items = self.sc.mtf if st["order"] != "asc" else list(reversed(self.sc.mtf))
+        txt = [t.strip().upper() for t in st["text"].split(",") if t.strip()]
+        items = [e for e in self.sc.mtf if not ((st["side"] != "ALL" and e["meta"]["type"] != st["side"])
+                 or (txt and not any(e["meta"]["sym"].startswith(t) for t in txt)))]
+        def key(e):
+            if self.col == "Stock": return (e["meta"]["sym"], e["meta"]["strike"])
+            if self.col == "Contract": return (e["meta"]["sym"], e["meta"]["strike"], e["meta"]["type"])
+            if self.col in tfs: v = e["cells"].get(self.col, (None,))[0]; return -1e18 if v is None else v
+            return max(abs(pp) for pp, c in e["cells"].values() if c and pp is not None)
+        items.sort(key=key, reverse=(st["order"] != "asc"))
+        lines = []
         for e in items:
             m = e["meta"]
-            if (st["side"] != "ALL" and m["type"] != st["side"]) or (txt and not any(m["sym"].startswith(t) for t in txt)): continue
             cells = [(p(e["cells"][t][0]) + ("!" if e["cells"][t][1] else "")) if t in e["cells"] else "-" for t in tfs]
             lines.append((fmt([m["sym"], "%g%s %s" % (m["strike"], m["type"], exp(m["expiry"])[:5])] + cells, cols), YEL))
-        self.table.set_lines(fmt([c[0] for c in cols], cols) + "   (! = crossed threshold)", lines[:int(st["max_rows"])])
+        head = fmt([c[0] + (ar if c[0] == self.col else "") for c in cols], cols)
+        self.table.set_lines(head, lines[:int(st["max_rows"])], cols)
 
 
 class HistoryScreen(Screen):
@@ -189,8 +261,14 @@ class HistoryScreen(Screen):
         self.ord = order_button(st)
         for w in (self.sort, Label(text="LTP%>", size_hint_x=.5), self.gt, Label(text="<", size_hint_x=.25), self.lt, self.ord): b5.add_widget(w)
         self.msg = Label(size_hint_y=None, height=dp(24), font_size=sp(11), color=(.7, .8, .9, 1)); self.table = Table()
+        self.table.on_sort = self.sort_by
         for w in (b1, b2, b3, b4, b5, self.msg, self.table): root.add_widget(w)
         self.add_widget(root)
+
+    def sort_by(self, title):
+        key = COL_KEYS.get(title); st = self.sc.st
+        if not key: return
+        toggle_sort(st, "h_sort", st["h_sort"], key); self.sort.text = INV.get(key, self.sort.text); self.refresh()
 
     def quick(self, k):
         d = self.sc.cal.session_date(datetime.datetime.now(IST)); e = d
@@ -218,24 +296,31 @@ class HistoryScreen(Screen):
         rows = [r for r in h.get("rows", []) if (self.side.text == "ALL" or r["type"] == self.side.text)
                 and (self.only.state != "down" or r["cross"]) and price_ok(r["ltp_pct"], gt, lt)]
         rows = sort_rows(rows, st["h_sort"], st["order"])[:int(st["max_rows"])]
-        self.table.set_lines(HHEADER, [(hist_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in rows])
+        self.table.set_lines(hdr(HCOLS, st["h_sort"], st["order"]), [(hist_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in rows], HCOLS)
+
+
+ALERT_COLS = [("Alert@", 8, "<")] + COLS
 
 
 class AlertScreen(Screen):
     def __init__(self, sc, **kw):
-        super().__init__(**kw); self.sc = sc
+        super().__init__(**kw); self.sc = sc; self.key = "alert_ts"
         root = BoxLayout(orientation="vertical"); b = bar()
         self.on = ToggleButton(text="Alerts ON", state="down" if sc.st["alerts_on"] else "normal")
         self.on.bind(state=lambda i, s: (sc.st.__setitem__("alerts_on", s == "down"), sc.st.save()))
         self.ord = order_button(sc.st)
         for w in (self.on, Button(text="Clear history", on_release=lambda i: sc.alerts.clear()), self.ord): b.add_widget(w)
-        self.table = Table(); root.add_widget(b); root.add_widget(self.table); self.add_widget(root)
+        self.table = Table(); self.table.on_sort = self.sort_by; root.add_widget(b); root.add_widget(self.table); self.add_widget(root)
+
+    def sort_by(self, title):
+        key = COL_KEYS.get(title)
+        if key: self.key = toggle_sort(self.sc.st, "_unused", self.key, key); self.refresh()
 
     def refresh(self):
-        st = self.sc.st; sync_order(self.ord, st); items = list(self.sc.alerts.history)
-        if st["order"] == "asc": items.reverse()
+        st = self.sc.st; sync_order(self.ord, st)
+        items = sort_rows(list(self.sc.alerts.history), self.key, st["order"])
         lines = [(hhmm(r["alert_ts"]) + " " + row_line(r), GREEN if r["oi_chg"] > 0 else RED) for r in items[:200]]
-        self.table.set_lines("Alert@   " + HEADER, lines)
+        self.table.set_lines(hdr(ALERT_COLS, self.key, st["order"]), lines, ALERT_COLS)
 
 
 class StockPicker(Popup):
